@@ -1,4 +1,4 @@
-# Omnicomm Telegram Bot
+# Omnicomm Online Telegram Bot
 
 Небольшой Telegram-бот для работы с API Omnicomm: выводит список терминалов и транспортных средств, а также профили по id.
 
@@ -33,3 +33,4 @@ OMNICOMM_PASSWORD=password
    python bot.py
 
 Замечание: НЕ загружайте `.env` в репозиторий. Храните секреты в CI/CD или в настройках инфраструктуры.
+
