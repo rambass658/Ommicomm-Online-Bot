@@ -57,9 +57,9 @@ class OmnicommClient:
             except ValueError as exc:
                 raise OmnicommAuthError("Login returned invalid JSON") from exc
 
-            token = body.get("token")
+            token = body.get("jwt")  # API возвращает 'jwt', а не 'token'
             if not token:
-                raise OmnicommAuthError(f"Login response missing token: {body}")
+                raise OmnicommAuthError(f"Login response missing token (jwt): {body}")
 
             self._token = token
             # Установим время жизни токена чуть меньше, чтобы избежать гонок
@@ -113,6 +113,10 @@ class OmnicommClient:
 
     async def get_vehicle_profile(self, vehicle_id: str) -> Any:
         return await self._request("GET", f"/ls/api/v1/profile/vehicle/{vehicle_id}")
+
+    async def get_vehicle_state(self, vehicle_id: str) -> Any:
+        """Получение состояния ТС по последним полученным данным."""
+        return await self._request("GET", f"/ls/api/v1/vehicles/{vehicle_id}/state")
 
     async def aclose(self) -> None:
         """Закрыть внутренний AsyncClient. Вызывать при завершении работы приложения."""
