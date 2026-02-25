@@ -1,11 +1,7 @@
 # Omnicomm Online Telegram Bot
 
-Небольшой Telegram-бот для работы с API Omnicomm: выводит список терминалов и транспортных средств, а также профили по id.
+Небольшой Telegram-бот для работы с API Omnicomm.
 
-Особенности
-- Асинхронный клиент на httpx.AsyncClient с безопасным обновлением JWT (asyncio.Lock)
-- Aiogram 3.x для обработки сообщений
-- Конфигурация через .env
 
 Переменные окружения
 - TG_BOT_TOKEN — токен Telegram-бота
@@ -21,6 +17,7 @@ OMNICOMM_USERNAME=login
 OMNICOMM_PASSWORD=password
 ```
 
-Замечание: НЕ загружайте `.env` в репозиторий. Храните секреты в CI/CD или в настройках инфраструктуры.
+
+
 
 
