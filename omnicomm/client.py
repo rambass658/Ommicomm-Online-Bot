@@ -1,6 +1,6 @@
 import time
 import asyncio
-from typing import Optional, Any
+from typing import Optional, Any, List
 
 import httpx
 
@@ -117,6 +117,37 @@ class OmnicommClient:
     async def get_vehicle_state(self, vehicle_id: str) -> Any:
         """Получение состояния ТС по последним полученным данным."""
         return await self._request("GET", f"/ls/api/v1/vehicles/{vehicle_id}/state")
+
+    async def get_rpm_report(self, vehicle_ids: List[int], from_datetime: int, to_datetime: int) -> Any:
+        """
+        Получение отчёта по оборотам двигателя за период.
+
+        Args:
+            vehicle_ids: список ID транспортных средств
+            from_datetime: начало периода (Unix timestamp в секундах)
+            to_datetime: конец периода (Unix timestamp в секундах)
+
+        Returns:
+            Данные отчёта
+        """
+        payload = {
+            "vehicleIds": vehicle_ids,
+            "fromDatetime": from_datetime,
+            "toDatetime": to_datetime
+        }
+        return await self._request("POST", "/ls/api/v1/reports/rpms", json=payload)
+
+    async def get_track_report(self, vehicle_id: str, time_begin: int, time_end: int) -> Any:
+        """
+        Получение трека ТС за указанный интервал времени.
+        Args:
+            vehicle_id: ID терминала или UUID
+            time_begin: начало интервала (Unix timestamp в секундах)
+            time_end: конец интервала (Unix timestamp в секундах)
+        Returns:
+            Словарь с треком: {"track": [{"date": ..., "latitude": ..., ...}]}
+        """
+        return await self._request("GET", f"/ls/api/v1/reports/track/{vehicle_id}?timeBegin={time_begin}&timeEnd={time_end}")
 
     async def aclose(self) -> None:
         """Закрыть внутренний AsyncClient. Вызывать при завершении работы приложения."""
