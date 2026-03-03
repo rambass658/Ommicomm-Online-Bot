@@ -6,7 +6,7 @@ import re
 import io
 import csv
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple, Optional, List, Any, Union
 
 from aiogram import Bot, Dispatcher, Router, F
@@ -23,7 +23,7 @@ import config
 import stats
 
 # ===== НАСТРОЙКА ЛОГИРОВАНИЯ =====
-# Создаём папку data, если её нет
+from logging.handlers import RotatingFileHandler
 os.makedirs("data", exist_ok=True)
 
 logging.basicConfig(
@@ -31,7 +31,12 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("data/bot.log", encoding="utf-8")
+        RotatingFileHandler(
+            "data/bot.log",
+            maxBytes=10*1024*1024,   # 10 МБ
+            backupCount=5,
+            encoding="utf-8"
+        )
     ]
 )
 logger = logging.getLogger(__name__)
@@ -522,11 +527,9 @@ def format_vehicle_state(data: dict, vehicle_id: str) -> str:
         try:
             if last_date > 10000000000:
                 last_date = last_date / 1000
-            dt = datetime.fromtimestamp(last_date)
-            if dt.year < 2000:
-                dt = datetime.fromtimestamp(last_date * 1000)
-            lines.append(f"🕒 <b>Последние данные:</b> {dt.strftime('%d.%m.%Y %H:%M:%S')}")
-            delta = datetime.now() - dt
+            dt = datetime.fromtimestamp(last_date, tz=timezone.utc)
+            lines.append(f"🕒 <b>Последние данные:</b> {dt.strftime('%d.%m.%Y %H:%M:%S')} UTC")
+            delta = datetime.now(timezone.utc) - dt
             if delta.days > 0:
                 lines.append(f"   <i>({delta.days} дн. {delta.seconds//3600} ч. назад)</i>")
             elif delta.seconds > 3600:
@@ -582,7 +585,6 @@ async def generate_and_send_rpm_report(
     semaphore = asyncio.Semaphore(5)
     processed = 0
     results = []
-    # Замок для безопасного обновления processed
     counter_lock = asyncio.Lock()
 
     async def process_one(tid: int) -> Dict:
@@ -626,7 +628,8 @@ async def generate_and_send_rpm_report(
                     'error': ''
                 }
             except Exception as e:
-                logger.error(f"Ошибка ТС {tid}: {e}")
+                # ИСПРАВЛЕНО: используем logger.exception, чтобы добавить traceback
+                logger.exception(f"Ошибка ТС {tid}")
                 return {
                     'id': str(tid),
                     'success': False,
