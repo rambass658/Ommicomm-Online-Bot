@@ -11,11 +11,6 @@ from .exceptions import OmnicommAuthError, OmnicommAPIError
 class OmnicommClient:
     """
     Асинхронный клиент для Omnicomm API на базе httpx.AsyncClient.
-
-    Примечания:
-    - Защищает обновление токена с помощью asyncio.Lock, чтобы избежать одновременных логинов.
-    - Если API вернул 401, выполнит обновление токена и повторит запрос один раз.
-    - Не забудьте закрыть клиент вызовом await client.aclose().
     """
     def __init__(self, client: Optional[httpx.AsyncClient] = None):
         self.base_url = config.OMNICOMM_BASE_URL
@@ -25,13 +20,10 @@ class OmnicommClient:
         self._token: Optional[str] = None
         self._token_expire_at: float = 0.0
 
-        # Используем собственный AsyncClient, если не передан
         self._client = client or httpx.AsyncClient(timeout=config.REQUEST_TIMEOUT)
-        # Lock для синхронизации обновления токена
         self._lock = asyncio.Lock()
 
     async def _login(self) -> None:
-        # Double-check внутри блокировки: другой корутин мог обновить токен
         async with self._lock:
             if self._token and time.time() < self._token_expire_at:
                 return
@@ -62,7 +54,6 @@ class OmnicommClient:
                 raise OmnicommAuthError(f"Login response missing token (jwt): {body}")
 
             self._token = token
-            # Установим время жизни токена чуть меньше, чтобы избежать гонок
             self._token_expire_at = time.time() + (55 * 60)
 
     async def _get_token(self) -> str:
@@ -82,9 +73,7 @@ class OmnicommClient:
             raise OmnicommAPIError(f"Request failed: {exc}") from exc
 
         if resp.status_code == 401:
-            # Попробуем обновить токен и повторить один раз
             async with self._lock:
-                # форсируем новый логин
                 await self._login()
                 headers["Authorization"] = f"JWT {self._token}"
 
@@ -96,7 +85,6 @@ class OmnicommClient:
         if resp.status_code >= 400:
             raise OmnicommAPIError(f"HTTP {resp.status_code}: {resp.text}")
 
-        # Попробуем вернуть JSON, иначе текст
         try:
             return resp.json()
         except ValueError:
@@ -115,21 +103,9 @@ class OmnicommClient:
         return await self._request("GET", f"/ls/api/v1/profile/vehicle/{vehicle_id}")
 
     async def get_vehicle_state(self, vehicle_id: str) -> Any:
-        """Получение состояния ТС по последним полученным данным."""
         return await self._request("GET", f"/ls/api/v1/vehicles/{vehicle_id}/state")
 
     async def get_rpm_report(self, vehicle_ids: List[int], from_datetime: int, to_datetime: int) -> Any:
-        """
-        Получение отчёта по оборотам двигателя за период.
-
-        Args:
-            vehicle_ids: список ID транспортных средств
-            from_datetime: начало периода (Unix timestamp в секундах)
-            to_datetime: конец периода (Unix timestamp в секундах)
-
-        Returns:
-            Данные отчёта
-        """
         payload = {
             "vehicleIds": vehicle_ids,
             "fromDatetime": from_datetime,
@@ -137,6 +113,17 @@ class OmnicommClient:
         }
         return await self._request("POST", "/ls/api/v1/reports/rpms", json=payload)
 
+    async def get_track_report(self, vehicle_id: str, time_begin: int, time_end: int) -> Any:
+        """
+        Получение трека ТС за указанный интервал времени.
+        Args:
+            vehicle_id: ID терминала или UUID
+            time_begin: начало интервала (Unix timestamp в секундах)
+            time_end: конец интервала (Unix timestamp в секундах)
+        Returns:
+            Словарь с треком: {"track": [{"date": ..., "latitude": ..., ...}]}
+        """
+        return await self._request("GET", f"/ls/api/v1/reports/track/{vehicle_id}?timeBegin={time_begin}&timeEnd={time_end}")
+
     async def aclose(self) -> None:
-        """Закрыть внутренний AsyncClient. Вызывать при завершении работы приложения."""
         await self._client.aclose()
