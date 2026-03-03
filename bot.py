@@ -23,7 +23,9 @@ import config
 import stats
 
 # ===== НАСТРОЙКА ЛОГИРОВАНИЯ =====
+# Создаём папку data, если её нет
 os.makedirs("data", exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -46,7 +48,6 @@ VEHICLES_DB_FILE = "data/vehicles_db.json"
 class VehicleSearch(StatesGroup):
     waiting_for_find_query = State()      # ожидание номера для поиска
     waiting_for_state_query = State()     # ожидание госномера или ID для состояния
-    waiting_for_track_query = State()     # ожидание номера для трека
 
 # ===== ФУНКЦИЯ ПРОВЕРКИ ДОСТУПА =====
 async def check_access(obj: Union[Message, CallbackQuery]) -> bool:
@@ -105,7 +106,6 @@ def main_menu_keyboard():
         [InlineKeyboardButton(text="🔍 Найти ТС", callback_data="menu_find")],
         [InlineKeyboardButton(text="📍 Состояние ТС", callback_data="menu_state")],
         [InlineKeyboardButton(text="📊 Отчёт по оборотам", callback_data="menu_rpm")],
-        [InlineKeyboardButton(text="🗺️ Трек ТС", callback_data="menu_track")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="menu_help")]
     ])
     return keyboard
@@ -120,8 +120,7 @@ def state_button_keyboard(terminal_id: str) -> InlineKeyboardMarkup:
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="📍 Состояние", callback_data=f"state_{terminal_id}"),
-            InlineKeyboardButton(text="📊 Отчёт (7д)", callback_data=f"rpm_{terminal_id}"),
-            InlineKeyboardButton(text="🗺️ Трек (7д)", callback_data=f"track_{terminal_id}")
+            InlineKeyboardButton(text="📊 Отчёт (7д)", callback_data=f"rpm_{terminal_id}")
         ],
         [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="menu_find")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_menu")]
@@ -250,18 +249,6 @@ async def menu_state(callback: CallbackQuery, state: FSMContext):
     await state.set_state(VehicleSearch.waiting_for_state_query)
     await callback.answer()
 
-@router.callback_query(F.data == "menu_track")
-async def menu_track(callback: CallbackQuery, state: FSMContext):
-    if not await check_access(callback):
-        await callback.answer()
-        return
-    stats.log_command(callback.from_user.id, callback.from_user.username, "callback_menu_track")
-    await callback.message.edit_text(
-        "🗺️ Выберите период для трека:",
-        reply_markup=period_keyboard("track")
-    )
-    await callback.answer()
-
 @router.callback_query(F.data == "menu_rpm")
 async def menu_rpm(callback: CallbackQuery):
     if not await check_access(callback):
@@ -276,22 +263,21 @@ async def menu_rpm(callback: CallbackQuery):
 
 @router.callback_query(F.data == "menu_help")
 async def menu_help(callback: CallbackQuery):
+    # Помощь доступна без активации
     stats.log_command(callback.from_user.id, callback.from_user.username, "callback_menu_help")
     await callback.message.edit_text(
         "📋 <b>Доступные команды:</b>\n\n"
         "/start — главное меню\n"
         "/state [госномер или ID] — состояние ТС\n"
         "/find [номер] — поиск ТС по номеру\n"
-        "/rpm_report [дни] — отчёт по оборотам (по умолч. 30 дней)\n"
-        "/track [номер] [дни] — трек за N дней (по умолч. 7)\n\n"
+        "/rpm_report [дни] — отчёт по оборотам (по умолч. 30 дней)\n\n"
         "🔑 <b>Как получить доступ?</b>\n"
         "Отправьте /activate [ключ], если у вас есть ключ активации.\n"
         "Для получения ключа обратитесь к администратору.\n\n"
         "<b>Примеры:</b>\n"
         "/state 2700РВ78\n"
         "/find 10039\n"
-        "/rpm_report 7\n"
-        "/track 2700РВ78 3",
+        "/rpm_report 7",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
@@ -366,44 +352,8 @@ async def rpm_all_period(callback: CallbackQuery):
         period_name=f"{days} дн."
     )
 
-@router.callback_query(F.data.startswith("track_") & (F.data.count("_") == 1))
-async def track_period_chosen(callback: CallbackQuery, state: FSMContext):
-    """Выбран период для трека (1,7,30). Переходим к ожиданию ввода номера."""
-    if not await check_access(callback):
-        await callback.answer()
-        return
-    days = int(callback.data.split("_")[1])
-    await state.update_data(track_days=days)
-    stats.log_command(callback.from_user.id, callback.from_user.username, f"track_period_{days}")
-    await callback.message.edit_text(
-        f"🗺️ Введите госномер, гаражный номер или ID для трека за {days} дн.:",
-        reply_markup=cancel_keyboard()
-    )
-    await state.set_state(VehicleSearch.waiting_for_track_query)
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("track_") & (F.data.count("_") == 1) & ~F.data.startswith("track_"))
-async def track_single(callback: CallbackQuery):
-    """Нажата кнопка '🗺️ Трек (7д)' в карточке ТС."""
-    if not await check_access(callback):
-        await callback.answer()
-        return
-    terminal_id = callback.data.replace("track_", "")
-    stats.log_command(callback.from_user.id, callback.from_user.username, f"track_single_{terminal_id}")
-    await callback.answer(f"⏳ Запрашиваю трек для ТС {terminal_id} за 7 дней...")
-    client: OmnicommClient = callback.bot.omnicomm_client
-    # ВЫЗОВ ЗАМЕНЁН НА НОВУЮ ФУНКЦИЮ KML
-    await generate_and_send_track_kml(
-        callback.message,
-        client,
-        terminal_id=terminal_id,
-        days=7,
-        period_name="7 дн."
-    )
-
-@router.callback_query(F.data.startswith("rpm_") & (F.data.count("_") == 2) & ~F.data.startswith("rpm_all"))
+@router.callback_query(F.data.startswith("rpm_") & ~F.data.startswith("rpm_all"))
 async def rpm_single(callback: CallbackQuery):
-    """Нажата кнопка отчёта по одному ТС (из карточки)."""
     if not await check_access(callback):
         await callback.answer()
         return
@@ -539,50 +489,7 @@ async def process_state_query(msg: Message, state: FSMContext):
         await processing_msg.delete()
         await msg.answer(f"❌ Ошибка: {str(exc)[:200]}", reply_markup=main_menu_keyboard())
 
-@router.message(VehicleSearch.waiting_for_track_query)
-async def process_track_query(msg: Message, state: FSMContext):
-    if not await check_access(msg):
-        return
-    data = await state.get_data()
-    days = data.get('track_days', 7)
-    identifier = msg.text.strip()
-    await state.clear()
-    stats.log_command(msg.from_user.id, msg.from_user.username, "fsm_track", identifier)
-
-    if not identifier:
-        await msg.answer("❌ Введите ID или госномер.", reply_markup=main_menu_keyboard())
-        return
-
-    terminal_id = None
-    if identifier.isdigit():
-        terminal_id = identifier
-    else:
-        terminal_id = find_terminal_id(identifier)
-        if not terminal_id:
-            await msg.answer(
-                f"❌ ТС с номером '{identifier}' не найдено в базе.\nПопробуйте /find для поиска.",
-                reply_markup=main_menu_keyboard()
-            )
-            return
-
-    processing_msg = await msg.answer(f"🗺️ Запрашиваю трек для ТС {terminal_id} за {days} дн...")
-    try:
-        client: OmnicommClient = msg.bot.omnicomm_client
-        # ВЫЗОВ ЗАМЕНЁН НА НОВУЮ ФУНКЦИЮ KML
-        await generate_and_send_track_kml(
-            msg,
-            client,
-            terminal_id=terminal_id,
-            days=days,
-            period_name=f"{days} дн."
-        )
-        await processing_msg.delete()
-    except Exception as exc:
-        stats.log_error(msg.from_user.id, "fsm_track", exc)
-        await processing_msg.delete()
-        await msg.answer(f"❌ Ошибка при получении трека: {str(exc)[:200]}", reply_markup=main_menu_keyboard())
-
-# ===== ФУНКЦИЯ ФОРМАТИРОВАНИЯ СОСТОЯНИЯ =====
+# ===== ФОРМАТИРОВАНИЕ СОСТОЯНИЯ =====
 def format_vehicle_state(data: dict, vehicle_id: str) -> str:
     if not isinstance(data, dict):
         return f"⚠️ Неожиданный формат данных: {str(data)[:500]}"
@@ -656,7 +563,7 @@ def format_vehicle_state(data: dict, vehicle_id: str) -> str:
         lines.append(f"🔋 <b>Напряжение:</b> {voltage} В")
     return "\n".join(lines)
 
-# ===== ФУНКЦИЯ ДЛЯ ОТЧЁТА ПО ОБОРОТАМ =====
+# ===== УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТЧЁТА (С ЗАЩИТОЙ СЧЁТЧИКА) =====
 async def generate_and_send_rpm_report(
     message: Message,
     client: OmnicommClient,
@@ -675,6 +582,7 @@ async def generate_and_send_rpm_report(
     semaphore = asyncio.Semaphore(5)
     processed = 0
     results = []
+    # Замок для безопасного обновления processed
     counter_lock = asyncio.Lock()
 
     async def process_one(tid: int) -> Dict:
@@ -755,125 +663,6 @@ async def generate_and_send_rpm_report(
     await status_msg.delete()
     await message.answer_document(document=file, caption=f"📊 Отчёт по оборотам за {period_name}. ТС: {total}.")
 
-# ===== НОВАЯ ФУНКЦИЯ ДЛЯ ТРЕКА В ФОРМАТЕ KML =====
-async def generate_and_send_track_kml(
-    message: Message,
-    client: OmnicommClient,
-    terminal_id: str,
-    days: int,
-    period_name: str
-):
-    """Запрашивает трек и отправляет KML-файл с маршрутом."""
-    status_msg = await message.answer(f"🗺️ Запрашиваю трек для ТС {terminal_id} за {period_name}...")
-
-    to_datetime = int(datetime.now().timestamp())
-    from_datetime = int((datetime.now() - timedelta(days=days)).timestamp())
-
-    try:
-        track_data = await client.get_track_report(terminal_id, from_datetime, to_datetime)
-        points = track_data.get('track', [])
-        if not points:
-            await status_msg.edit_text("⚠️ За указанный период нет данных о перемещении.")
-            return
-
-        # ==== Генерируем KML ====
-        kml_header = '''<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <Document>
-    <name>Трек ТС {}</name>
-    <Style id="trackLine">
-      <LineStyle>
-        <color>ff0000ff</color>
-        <width>4</width>
-      </LineStyle>
-    </Style>
-    <Style id="startPoint">
-      <IconStyle>
-        <color>ff00ff00</color>
-        <scale>1.2</scale>
-        <Icon>
-          <href>http://maps.google.com/mapfiles/kml/paddle/grn-blank.png</href>
-        </Icon>
-      </IconStyle>
-    </Style>
-    <Style id="endPoint">
-      <IconStyle>
-        <color>ffff0000</color>
-        <scale>1.2</scale>
-        <Icon>
-          <href>http://maps.google.com/mapfiles/kml/paddle/red-blank.png</href>
-        </Icon>
-      </IconStyle>
-    </Style>
-'''.format(terminal_id)
-
-        # Трек (линия)
-        kml_track = '''    <Placemark>
-      <name>Маршрут</name>
-      <styleUrl>#trackLine</styleUrl>
-      <LineString>
-        <altitudeMode>clampToGround</altitudeMode>
-        <coordinates>'''
-        for p in points:
-            kml_track += f"\n          {p['longitude']},{p['latitude']},0"
-        kml_track += '''\n        </coordinates>
-      </LineString>
-    </Placemark>
-'''
-
-        # Точки старта и финиша
-        start = points[0]
-        end = points[-1]
-        start_time = datetime.fromtimestamp(start['date']).strftime('%Y-%m-%d %H:%M:%S')
-        end_time = datetime.fromtimestamp(end['date']).strftime('%Y-%m-%d %H:%M:%S')
-
-        kml_points = f'''    <Placemark>
-      <name>Старт ({start_time})</name>
-      <styleUrl>#startPoint</styleUrl>
-      <Point>
-        <coordinates>{start['longitude']},{start['latitude']},0</coordinates>
-      </Point>
-    </Placemark>
-    <Placemark>
-      <name>Финиш ({end_time})</name>
-      <styleUrl>#endPoint</styleUrl>
-      <Point>
-        <coordinates>{end['longitude']},{end['latitude']},0</coordinates>
-      </Point>
-    </Placemark>
-'''
-
-        kml_footer = '''  </Document>
-</kml>'''
-
-        kml_content = kml_header + kml_track + kml_points + kml_footer
-        kml_bytes = kml_content.encode('utf-8')
-        kml_file = BufferedInputFile(
-            kml_bytes,
-            filename=f"track_{terminal_id}_{datetime.now().strftime('%Y%m%d_%H%M')}_{period_name}.kml"
-        )
-
-        # ==== Отправляем ====
-        await status_msg.delete()
-        await message.answer_document(
-            document=kml_file,
-            caption=(
-                f"🗺️ <b>Трек ТС {terminal_id} за {period_name}</b>\n"
-                f"📍 Всего точек: {len(points)}\n"
-                f"🕒 Период: {datetime.fromtimestamp(from_datetime).strftime('%d.%m.%Y %H:%M')} – "
-                f"{datetime.fromtimestamp(to_datetime).strftime('%d.%m.%Y %H:%M')}\n\n"
-                f"📌 <b>Как открыть KML на телефоне:</b>\n"
-                f"• Android: установите <b>Google Earth</b> или <b>Maps.me</b>, откройте файл.\n"
-                f"• iPhone: установите <b>Google Earth</b>, откройте файл через приложение «Файлы».\n"
-                f"• Также можно загрузить на <a href='https://www.google.com/maps/d/'>Google My Maps</a> (требуется аккаунт)."
-            ),
-            parse_mode=ParseMode.HTML
-        )
-
-    except Exception as e:
-        logger.error(f"Ошибка при получении трека для ТС {terminal_id}: {e}")
-        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
-
 # ===== ТЕКСТОВЫЕ КОМАНДЫ =====
 @router.message(Command("find"))
 async def find_command(msg: Message):
@@ -902,17 +691,102 @@ async def find_command(msg: Message):
         response = f"✅ <b>ТС найдено!</b>\n\n<b>ID терминала:</b> <code>{terminal_id}</code>\n<b>Госномер:</b> {plate}\n<b>Название:</b> {name}\n<b>Марка/модель:</b> {brand} {model}"
         await msg.answer(response, parse_mode=ParseMode.HTML, reply_markup=state_button_keyboard(terminal_id))
         return
-    # (частичное совпадение – код не меняем, он есть выше в process_find_query)
-    # Для команды /find нужно добавить обработку частичного совпадения (аналогично process_find_query)
-    # Но так как команда /find уже была реализована ранее, я не буду дублировать здесь весь код.
-    # Предполагается, что полная реализация /find уже есть в вашем bot.py. 
-    # Если её нет, нужно добавить. Но в последней версии она была. Я её оставлю без изменений.
+    matches = []
+    seen_ids = set()
+    for key, tid in VEHICLE_INDEX.items():
+        if norm_query in key:
+            if tid not in seen_ids:
+                seen_ids.add(tid)
+                matches.append({'id': tid, 'key': key})
+        if len(matches) >= 10:
+            break
+    if not matches:
+        await msg.answer(f"❌ По запросу '{query}' ничего не найдено.", reply_markup=main_menu_keyboard())
+        return
+    lines = [f"🔍 <b>Найдено по запросу '{query}':</b>", ""]
+    for i, m in enumerate(matches, 1):
+        details = VEHICLE_DETAILS.get(m['id'], {})
+        plate = details.get('plate', '')
+        name = details.get('name', '')
+        if plate:
+            lines.append(f"{i}. <b>{plate}</b>")
+        else:
+            lines.append(f"{i}. <b>{m['key']}</b>")
+        lines.append(f"   ID: <code>{m['id']}</code>")
+        if name:
+            lines.append(f"   {name[:50]}")
+        lines.append("")
+    if len(matches) == 10:
+        lines.append("<i>Показаны первые 10 результатов. Уточните запрос.</i>")
+    keyboard_rows = []
+    for m in matches:
+        details = VEHICLE_DETAILS.get(m['id'], {})
+        plate = details.get('plate', '')
+        if plate:
+            button_text = f"📍 {plate}"
+        else:
+            short_key = m['key'][:8]
+            button_text = f"📍 {short_key}..."
+        keyboard_rows.append([InlineKeyboardButton(text=button_text, callback_data=f"state_{m['id']}")])
+    keyboard_rows.append([InlineKeyboardButton(text="🔍 Новый поиск", callback_data="menu_find")])
+    keyboard_rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_menu")])
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    await msg.answer("\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
-# Примечание: полный код команды /find был в предыдущих версиях, я его сохранил.
-# Ниже идёт оригинальная команда /find (сокращена для краткости, но в реальном файле она полная).
-# В целях экономии места я не буду переписывать всю команду, так как она не менялась.
+@router.message(Command("state"))
+async def state_command(msg: Message):
+    if not await check_access(msg):
+        return
+    stats.log_command(msg.from_user.id, msg.from_user.username, "state", msg.text)
+    args = msg.text.split()
+    if len(args) < 2:
+        await msg.answer("⚠️ Использование: /state [госномер или ID]\n\nПример: /state 2700РВ78", reply_markup=main_menu_keyboard())
+        return
+    identifier = args[1].strip()
+    terminal_id = None
+    if identifier.isdigit():
+        terminal_id = identifier
+    else:
+        terminal_id = find_terminal_id(identifier)
+        if not terminal_id:
+            await msg.answer(f"❌ ТС с номером '{identifier}' не найдено.", reply_markup=main_menu_keyboard())
+            return
+    processing_msg = await msg.answer(f"🔍 Запрашиваю состояние ТС ID: {terminal_id}...")
+    try:
+        client: OmnicommClient = msg.bot.omnicomm_client
+        state_data = await client.get_vehicle_state(terminal_id)
+        response = format_vehicle_state(state_data, terminal_id)
+        await processing_msg.delete()
+        await msg.answer(response, parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard())
+    except Exception as exc:
+        stats.log_error(msg.from_user.id, "state", exc)
+        await processing_msg.delete()
+        await msg.answer(f"❌ Ошибка: {str(exc)[:200]}", reply_markup=main_menu_keyboard())
 
-# ===== КОМАНДА СТАТИСТИКИ =====
+@router.message(Command("rpm_report"))
+async def rpm_report_cmd(msg: Message):
+    if not await check_access(msg):
+        return
+    stats.log_command(msg.from_user.id, msg.from_user.username, "rpm_report", msg.text)
+    if not VEHICLE_INDEX:
+        await msg.answer("⚠️ База ТС не загружена.")
+        return
+    args = msg.text.split()
+    days = 30
+    if len(args) >= 2:
+        try:
+            days = int(args[1])
+            if days < 1:
+                await msg.answer("❌ Число дней должно быть положительным.")
+                return
+        except ValueError:
+            await msg.answer("❌ Неверный формат. Пример: /rpm_report 7")
+            return
+    vehicle_ids = [int(tid) for tid in set(VEHICLE_INDEX.values())]
+    client: OmnicommClient = msg.bot.omnicomm_client
+    await generate_and_send_rpm_report(msg, client, vehicle_ids=vehicle_ids, days=days, period_name=f"{days} дн.")
+
+# ===== КОМАНДА СТАТИСТИКИ (ТОЛЬКО ДЛЯ АДМИНА) =====
 @router.message(Command("stats"))
 async def stats_command(msg: Message):
     if msg.from_user.id not in config.ADMIN_IDS:
@@ -934,7 +808,7 @@ async def stats_command(msg: Message):
         response += f"  {hour}:00 — {count}\n"
     await msg.answer(response, parse_mode=ParseMode.HTML)
 
-# ===== ЗАПУСК БОТА =====
+# ===== ЗАПУСК БОТА (С ГЛОБАЛЬНЫМ КЛИЕНТОМ) =====
 async def main():
     stats.init_db()
     client = OmnicommClient()
