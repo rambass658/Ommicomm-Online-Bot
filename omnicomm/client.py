@@ -137,18 +137,6 @@ class OmnicommClient:
         }
         return await self._request("POST", "/ls/api/v1/reports/rpms", json=payload)
 
-    async def get_track_report(self, vehicle_id: str, time_begin: int, time_end: int) -> Any:
-        """
-        Получение трека ТС за указанный интервал времени.
-        Args:
-            vehicle_id: ID терминала или UUID
-            time_begin: начало интервала (Unix timestamp в секундах)
-            time_end: конец интервала (Unix timestamp в секундах)
-        Returns:
-            Словарь с треком: {"track": [{"date": ..., "latitude": ..., ...}]}
-        """
-        return await self._request("GET", f"/ls/api/v1/reports/track/{vehicle_id}?timeBegin={time_begin}&timeEnd={time_end}")
-
     async def aclose(self) -> None:
         """Закрыть внутренний AsyncClient. Вызывать при завершении работы приложения."""
         await self._client.aclose()
